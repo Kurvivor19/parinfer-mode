@@ -35,6 +35,8 @@
 (defconst parinferlib--LINE_NO_IDX 2)
 (defconst parinferlib--X_IDX 3)
 
+(defconst parinferlib--SENTINEL_NULL -999)
+
 (defconst parinferlib--PARENS (make-hash-table :test 'equal))
 (puthash "{" "}" parinferlib--PARENS)
 (puthash "}" "{" parinferlib--PARENS)
@@ -73,6 +75,7 @@
 
     (puthash :origText text result)
     (puthash :origLines lines-vector result)
+    (puthash :origCursorX cursor-x result)
 
     (puthash :lines (make-vector (length lines-vector) nil) result)
     (puthash :lineNo -1 result)
@@ -149,11 +152,6 @@
 ;; String Operations
 ;;------------------------------------------------------------------------------
 
-(defun parinferlib--insert-within-string (orig idx insert)
-  (concat (substring orig 0 idx)
-          insert
-          (substring orig idx)))
-
 (defun parinferlib--replace-within-string (orig start end replace)
   (let* ((orig-length (length orig))
          (head (substring orig 0 start))
@@ -161,10 +159,6 @@
                  ""
                  (substring orig end))))
     (concat head replace tail)))
-
-(defun parinferlib--remove-within-string (orig start end)
-  (concat (substring orig 0 start)
-          (substring orig end)))
 
 ;;------------------------------------------------------------------------------
 ;; Line Operations
@@ -176,17 +170,33 @@
          (new-line (parinferlib--insert-within-string line idx insert)))
     (aset lines line-no new-line)))
 
+(defun parinferlib--shift-cursor-on-edit (result line-no start end replace)
+  (let* ((old-length (- end start))
+         (new-length (length replace))
+         (dx (- new-length old-length))
+         (cursor-line (gethash :cursorLine result))
+         (cursor-x (gethash :cursorX result)))
+    (if (and (/= dx 0)
+             (= cursor-line line-no)
+             (/= cursor-x parinferlib--SENTINEL_NULL)
+             (>= cursor-x end))
+        (aset cursor-x (+ cursor-x dx)))))    
+
 (defun parinferlib--replace-within-line (result line-no start end replace)
   (let* ((lines (gethash :lines result))
          (line (aref lines line-no))
          (new-line (parinferlib--replace-within-string line start end replace)))
-    (aset lines line-no new-line)))
+    (aset lines line-no new-line)
+    (parinferlib--shift-cursor-on-edit result line-no start end replace)))
 
 (defun parinferlib--remove-within-line (result line-no start end)
   (let* ((lines (gethash :lines result))
          (line (aref lines line-no))
          (new-line (parinferlib--remove-within-string line start end)))
     (aset lines line-no new-line)))
+
+(defun parinferlib--insert-within-line (result line-no idx insert)
+  (parinferlib--replace-within-line result line-no idx idx insert))
 
 (defun parinferlib--init-line (result line)
   (let* ((current-line-no (gethash :lineNo result))
@@ -421,8 +431,7 @@
         (while (parinferlib--not-empty? openers)
           (setq paren-stack (cons (pop openers) paren-stack)))
         (puthash :parenTrailOpeners openers result)
-        (puthash :parenStack paren-stack result)
-        (parinferlib--remove-within-line result (gethash :lineNo result) start-x end-x)))))
+        (puthash :parenStack paren-stack result)))))
 
 (defun parinferlib--correct-paren-trail (result indent-x)
   (let ((parens "")
@@ -439,8 +448,9 @@
           (setq break? t))))
     (puthash :parenStack paren-stack result)
     (let ((paren-trail-line-no (gethash :parenTrailLineNo result))
-          (paren-trail-start-x (gethash :parenTrailStartX result)))
-      (parinferlib--insert-within-line result paren-trail-line-no paren-trail-start-x parens))))
+          (paren-trail-start-x (gethash :parenTrailStartX result))
+          (paren-trail-end-x (gethash :parenTrailEndX result)))
+      (parinferlib--replace-within-line result paren-trail-line-no paren-trail-start-x paren-trail-end-x parens))))
 
 (defun parinferlib--clean-paren-trail (result)
   (let* ((start-x (gethash :parenTrailStartX result))
@@ -644,13 +654,17 @@
   "Return a plist for the Public API."
   (if (gethash :success result)
     (let* ((lines (gethash :lines result))
-           (result-text (mapconcat 'identity lines parinferlib--NEWLINE)))
+           (result-text (mapconcat 'identity lines parinferlib--NEWLINE))
+           (cursor-x (gethash :cursorX result)))
       (list :success t
+            :cursorX cursor-x
             :text result-text))
     (let ((orig-text (gethash :origText result))
-          (public-error (gethash :error result)))
+          (public-error (gethash :error result))
+          (orig-cursor-x (gethash :origCursorX result)))
       (list :success nil
             :text orig-text
+            :cursorX orig-cursor-x
             :error public-error))))
 
 ;;------------------------------------------------------------------------------
