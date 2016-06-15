@@ -21,6 +21,7 @@
 (defconst parinferlib--DOUBLE_SPACE "  ")
 (defconst parinferlib--DOUBLE_QUOTE "\"")
 (defconst parinferlib--NEWLINE "\n")
+(defconst parinferlib--LINE_ENDING_REGEX "\r?\n")
 (defconst parinferlib--SEMICOLON ";")
 (defconst parinferlib--TAB "\t")
 
@@ -69,13 +70,13 @@
 ;;------------------------------------------------------------------------------
 
 (defun parinferlib--create-initial-result (text mode cursor-x cursor-line cursor-dx)
-  (let ((lines-vector (vconcat (split-string text parinferlib--NEWLINE)))
+  (let ((lines-vector (vconcat (split-string text parinferlib--LINE_ENDING_REGEX)))
         (result (make-hash-table)))
     (puthash :mode mode result)
 
     (puthash :origText text result)
     (puthash :origLines lines-vector result)
-    (puthash :origCursorX cursor-x result)
+    (puthash :origCursorX parinferlib--SENTINEL_NULL result)
 
     (puthash :lines (make-vector (length lines-vector) nil) result)
     (puthash :lineNo -1 result)
@@ -84,9 +85,9 @@
 
     (puthash :parenStack '() result)
 
-    (puthash :parenTrailLineNo nil result)
-    (puthash :parenTrailStartX nil result)
-    (puthash :parenTrailEndX nil result)
+    (puthash :parenTrailLineNo parinferlib--SENTINEL_NULL result)
+    (puthash :parenTrailStartX parinferlib--SENTINEL_NULL result)
+    (puthash :parenTrailEndX parinferlib--SENTINEL_NULL result)
     (puthash :parenTrailOpeners '() result)
 
     (puthash :cursorX (or cursor-x parinferlib--SENTINEL_NULL) result)
@@ -97,14 +98,14 @@
     (puthash :isEscaping nil result)
     (puthash :isInStr nil result)
     (puthash :isInComment nil result)
-    (puthash :commentX nil result)
+    (puthash :commentX parinferlib--SENTINEL_NULL result)
 
     (puthash :quoteDanger nil result)
     (puthash :trackingIndent nil result)
     (puthash :skipChar nil result)
     (puthash :success nil result)
 
-    (puthash :maxIndent nil result)
+    (puthash :maxIndent parinferlib--SENTINEL_NULL result)
     (puthash :indentDelta 0 result)
 
     (puthash :error nil result)
@@ -138,9 +139,9 @@
   (let* ((error-cache (gethash :errorPosCache result))
          (error-msg (gethash error-name parinferlib--ERR_MESSAGES))
          (error-pos (plist-get error-cache error-name)))
-    (when (not line-no)
+    (when (/= line-no parinferlib--SENTINEL_NULL)
       (setq line-no (aref error-pos 0)))
-    (when (not x)
+    (when (/= x parinferlib--SENTINEL_NULL)
       (setq x (aref error-pos 1)))
     ;; return a plist of the error
     (list :name error-name
@@ -187,7 +188,7 @@
              (= cursor-line line-no)
              (/= cursor-x parinferlib--SENTINEL_NULL)
              (parinferlib--is-cursor-affected result start end))
-        (aset cursor-x (+ cursor-x dx)))))
+        (puthash :cursorX (+ cursor-x dx) result))))
 
 (defun parinferlib--replace-within-line (result line-no start end replace)
   (let* ((lines (gethash :lines result))
@@ -215,7 +216,7 @@
     (puthash :lineNo new-line-no result)
 
     ;; reset line-specific state
-    (puthash :commentX nil result)
+    (puthash :commentX parinferlib--SENTINEL_NULL result)
     (puthash :indentDelta 0 result)))
 
 ;; if the current character has changed, commit it's change to the current line
@@ -234,9 +235,9 @@
 ;;------------------------------------------------------------------------------
 
 (defun parinferlib--clamp (val-n min-n max-n)
-  (when min-n
+  (when (/= min-n parinferlib--SENTINEL_NULL)
     (setq val-n (if (> min-n val-n) min-n val-n)))
-  (when max-n
+  (when (/= max-n parinferlib--SENTINEL_NULL)
     (setq val-n (if (< max-n val-n) max-n val-n)))
   val-n)
 
@@ -350,7 +351,8 @@
          (cursor-x (gethash :cursorX result))
          (result-x (gethash :x result)))
     (and (equal line-no cursor-line)
-         cursor-x
+         (/= cursor-x parinferlib--SENTINEL_NULL)
+         (/= result-x parinferlib--SENTINEL_NULL)
          (<= cursor-x result-x))))
 
 (defun parinferlib--cursor-on-right? (result x)
@@ -358,8 +360,8 @@
          (cursor-line (gethash :cursorLine result))
          (cursor-x (gethash :cursorX result)))
     (and (equal line-no cursor-line)
-         cursor-x
-         x
+         (/= cursor-x parinferlib--SENTINEL_NULL)
+         (/= x parinferlib--SENTINEL_NULL)
          (> cursor-x x))))
 
 (defun parinferlib--cursor-in-comment? (result)
@@ -372,7 +374,7 @@
          (cursor-x (gethash :cursorX result))
          (x (gethash :x result))
          (indent-delta (gethash :indentDelta result))
-         (has-delta? (and cursor-dx
+         (has-delta? (and (/= cursor-dx parinferlib--SENTINEL_NULL)
                           (equal cursor-line line-no)
                           (equal cursor-x x))))
     (when has-delta?
@@ -402,7 +404,7 @@
       (puthash :parenTrailStartX (1+ x) result)
       (puthash :parenTrailEndX (1+ x) result)
       (puthash :parenTrailOpeners '() result)
-      (puthash :maxIndent nil result))))
+      (puthash :maxIndent parinferlib--SENTINEL_NULL result))))
 
 (defun parinferlib--clamp-paren-trail-to-cursor (result)
   (let* ((start-x (gethash :parenTrailStartX result))
@@ -429,7 +431,7 @@
         (puthash :parenTrailStartX new-start-x result)
         (puthash :parenTrailEndX new-end-x result)))))
 
-(defun parinferlib--remove-paren-trail (result)
+(defun parinferlib--pop-paren-trail (result)
   (let ((start-x (gethash :parenTrailStartX result))
         (end-x (gethash :parenTrailEndX result)))
     (when (not (equal start-x end-x))
@@ -503,7 +505,7 @@
          (cursor-line (gethash :cursorLine result)))
     (when (equal mode :indent)
       (parinferlib--clamp-paren-trail-to-cursor result)
-      (parinferlib--remove-paren-trail result))
+      (parinferlib--pop-paren-trail result))
     (when (and (equal mode :paren)
                (not (equal line-no cursor-line)))
       (parinferlib--clean-paren-trail result))))
@@ -537,7 +539,7 @@
 (defun parinferlib--on-proper-indent (result)
   (puthash :trackingIndent nil result)
   (when (gethash :quoteDanger result)
-    (throw 'parinferlib-error (parinferlib--create-error result parinferlib--ERR_QUOTE_DANGER nil nil)))
+    (throw 'parinferlib-error (parinferlib--create-error result parinferlib--ERR_QUOTE_DANGER parinferlib--SENTINEL_NULL parinferlib--SENTINEL_NULL)))
   (let ((mode (gethash :mode result))
         (x (gethash :x result)))
     (when (equal mode :indent)
@@ -620,10 +622,10 @@
 (defun parinferlib--finalize-result (result)
   (when (gethash :quoteDanger result)
     (throw 'parinferlib-error
-           (parinferlib--create-error result parinferlib--ERR_QUOTE_DANGER nil nil)))
+           (parinferlib--create-error result parinferlib--ERR_QUOTE_DANGER parinferlib--SENTINEL_NULL parinferlib--SENTINEL_NULL)))
   (when (gethash :isInStr result)
     (throw 'parinferlib-error
-           (parinferlib--create-error result parinferlib--ERR_UNCLOSED_QUOTE nil nil)))
+           (parinferlib--create-error result parinferlib--ERR_UNCLOSED_QUOTE parinferlib--SENTINEL_NULL parinferlib--SENTINEL_NULL)))
   (let* ((paren-stack (gethash :parenStack result))
          (mode (gethash :mode result)))
     (when (parinferlib--not-empty? paren-stack)
