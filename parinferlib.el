@@ -690,6 +690,9 @@
   (let ((result (parinferlib--process-text text :paren cursor-x cursor-line cursor-dx)))
     (parinferlib--public-result result)))
 
+(defun parinferlib-version ()
+  "1/6/1+dev")
+
 (provide 'parinferlib)
 
 ;;; parinfer-lib.el ends here
