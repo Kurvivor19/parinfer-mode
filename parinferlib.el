@@ -164,6 +164,13 @@
 ;; Line Operations
 ;;------------------------------------------------------------------------------
 
+(defun parinferlib--is-cursor-affected (result start end)
+  (let ((cursor-x (gethash :cursorX result)))
+    (if (and (= cursor-x start)
+             (= cursor-x end))
+        (= cursor-x 0)
+      (>= cursor-x end))))
+
 (defun parinferlib--insert-within-line (result line-no idx insert)
   (let* ((lines (gethash :lines result))
          (line (aref lines line-no))
@@ -179,8 +186,8 @@
     (if (and (/= dx 0)
              (= cursor-line line-no)
              (/= cursor-x parinferlib--SENTINEL_NULL)
-             (>= cursor-x end))
-        (aset cursor-x (+ cursor-x dx)))))    
+             (parinferlib--is-cursor-affected result start end))
+        (aset cursor-x (+ cursor-x dx)))))
 
 (defun parinferlib--replace-within-line (result line-no start end replace)
   (let* ((lines (gethash :lines result))
