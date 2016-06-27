@@ -97,6 +97,7 @@
     (puthash :cursorLine (or cursor-line parinferlib--SENTINEL_NULL) result)
     (puthash :cursorDx (or cursor-dx parinferlib--SENTINEL_NULL) result)
     (puthash :previewCursorScope nil result)
+    (puthash :indentAtCursor nil result)
 
     (puthash :isInCode t result)
     (puthash :isEscaping nil result)
