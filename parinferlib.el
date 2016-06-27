@@ -635,17 +635,7 @@
 
 (defun parinferlib--process-line (result line)
   (parinferlib--init-line result line)
-
-  (let* ((mode (gethash :mode result)))
-    (when (equal mode :indent)
-      (let* ((paren-stack (gethash :parenStack result))
-             (in-str? (gethash :isInStr result))
-             (tracking-indent? (and (parinferlib--not-empty? paren-stack)
-                                    (not in-str?))))
-        (puthash :trackingIndent tracking-indent? result)))
-    (when (equal mode :paren)
-      (puthash :trackingIndent (not (gethash :isInStr result)) result)))
-  (parinferlib--init-ind)
+  (parinferlib--init-indent)
   (let* ((i 0)
          (chars (concat line parinferlib--NEWLINE))
          (chars-length (length chars)))
