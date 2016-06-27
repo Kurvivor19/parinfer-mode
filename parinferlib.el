@@ -735,7 +735,7 @@
     (parinferlib--public-result result)))
 
 (defun parinferlib-version ()
-  "1.7.0")
+  "1.7.1")
 
 (provide 'parinferlib)
 
