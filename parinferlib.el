@@ -729,6 +729,17 @@
       (parinferlib--process-error result err))
     result))
 
+(defun parinferlib--get-changed-lines (result)
+  (let* ((orig-lines (gethash :origLines result))
+         (lines (gethash :lines result))
+         (lines-length (min (length orig-lines) (length lines)))
+         (changed-lines nil))
+    (dotimes (i lines-length changed-lines)
+      (let ((line (aref lines i))
+            (orig-line (aref orig-lines i)))
+        (unless (string= line orig-line)
+          (push (vector i line) changed-lines))))))
+
 (defun parinferlib--public-result (result)
   "Return a plist for the Public API."
   (if (gethash :success result)
@@ -739,6 +750,7 @@
       (list :success t
             :cursorX cursor-x
             :text result-text
+            :changedLines (parinferlib--get-changed-lines result)
             :tabStops tab-stops))
     (let ((orig-text (gethash :origText result))
           (public-error (gethash :error result))
