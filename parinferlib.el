@@ -89,9 +89,9 @@
     (puthash :parenTrailEndX nil result)
     (puthash :parenTrailOpeners '() result)
 
-    (puthash :cursorX cursor-x result)
-    (puthash :cursorLine cursor-line result)
-    (puthash :cursorDx cursor-dx result)
+    (puthash :cursorX (or cursor-x parinferlib--SENTINEL_NULL) result)
+    (puthash :cursorLine (or cursor-line parinferlib--SENTINEL_NULL) result)
+    (puthash :cursorDx (or cursor-dx parinferlib--SENTINEL_NULL) result)
 
     (puthash :isInCode t result)
     (puthash :isEscaping nil result)
