@@ -38,6 +38,9 @@
 
 (defconst parinferlib--SENTINEL_NULL -999)
 
+;; determines if a line only contains a Paren Trail (possibly w/ a comment)
+(defconst parinferlib--STANDALONE_PAREN_TRAIL "^[[:space:]\\])}]*\(;.*\)?")
+
 (defconst parinferlib--PARENS (make-hash-table :test 'equal))
 (puthash "{" "}" parinferlib--PARENS)
 (puthash "}" "{" parinferlib--PARENS)
@@ -93,6 +96,7 @@
     (puthash :cursorX (or cursor-x parinferlib--SENTINEL_NULL) result)
     (puthash :cursorLine (or cursor-line parinferlib--SENTINEL_NULL) result)
     (puthash :cursorDx (or cursor-dx parinferlib--SENTINEL_NULL) result)
+    (puthash :previewCursorScope nil result)
 
     (puthash :isInCode t result)
     (puthash :isEscaping nil result)
@@ -384,6 +388,13 @@
 ;; Paren Trail functions
 ;;------------------------------------------------------------------------------
 
+(defun parinferlib--reset-paren-trail (result line-no x)
+  (puthash :parenTrailLineNo line-no result)
+  (puthash :parenTrailStartX x result)
+  (puthash :parenTrailEndX x result)
+  (puthash :parenTrailOpeners '() result)
+  (puthash :maxIndent parinferlib--SENTINEL_NULL result))
+
 (defun parinferlib--update-paren-trail-bounds (result)
   (let* ((lines (gethash :lines result))
          (line-no (gethash :lineNo result))
@@ -400,11 +411,7 @@
                                  (string= prev-ch parinferlib--BACKSLASH))
                              (not (string= ch parinferlib--DOUBLE_SPACE)))))
     (when should-reset?
-      (puthash :parenTrailLineNo line-no result)
-      (puthash :parenTrailStartX (1+ x) result)
-      (puthash :parenTrailEndX (1+ x) result)
-      (puthash :parenTrailOpeners '() result)
-      (puthash :maxIndent parinferlib--SENTINEL_NULL result))))
+      (parinferlib--reset-paren-trail result line-no (1+ x)))))
 
 (defun parinferlib--clamp-paren-trail-to-cursor (result)
   (let* ((start-x (gethash :parenTrailStartX result))
@@ -536,7 +543,7 @@
         (puthash :x new-indent result)
         (puthash :indentDelta new-indent-delta result)))))
 
-(defun parinferlib--on-proper-indent (result)
+(defun parinferlib--on-indent (result)
   (puthash :trackingIndent nil result)
   (when (gethash :quoteDanger result)
     (throw 'parinferlib-error (parinferlib--create-error result parinferlib--ERR_QUOTE_DANGER parinferlib--SENTINEL_NULL parinferlib--SENTINEL_NULL)))
@@ -556,19 +563,52 @@
       (when (parinferlib--valid-close-paren? paren-stack ch)
         (if (parinferlib--cursor-on-left? result)
           (progn (puthash :skipChar nil result)
-                 (parinferlib--on-proper-indent result))
+                 (parinferlib--on-indent result))
           (parinferlib--append-paren-trail result))))))
 
-(defun parinferlib--on-indent (result)
-  (let ((ch (gethash :ch result)))
-    (cond ((parinferlib--close-paren? ch)
-           (parinferlib--on-leading-close-paren result))
+(defun parinferlib--check-indent (result)
+  (let ((ch (gethash :ch result))
+        (result-x (gethash :x result))
+        (cursor-x (gethash :cursorX result))
+        (line-no (gethash :lineNo result)))
+    (cond  ((and (gethash :indentAtCursor result)
+                 (= result-x cursor-x))
+            (parinferlib--on-indent result)
+            (parinferlib--reset-paren-trail result line-no result-x))
+           ((parinferlib--close-paren? ch)
+            (parinferlib--on-leading-close-paren result))
 
           ((string= ch parinferlib--SEMICOLON)
            (puthash :trackingIndent nil result))
 
-          ((not (string= ch parinferlib--NEWLINE))
-           (parinferlib--on-proper-indent result)))))
+          ((not (or (string= ch parinferlib--NEWLINE)
+                    (string= ch parinferlib--BLANK_SPACE)
+                    (string= ch parinferlib--TAB)))
+           (parinferlib--on-indent result)))))
+
+(defun parinferlib--init-indent (result)
+  (let ((mode (gethash :mode result))
+        (in-str? (gethash :isInStr result)))
+    (cond
+     ((equal mode :indent)
+      (let* ((paren-stack-length (length (gethash :parenStack result)))
+             (tracking-indent (and (/= 0 paren-stack-length)
+                                   (not in-str?)))
+             (line-no (gethash :lineNo result))
+             (line (aref (gethash :lines result) line-no))
+             (semicolon-x (string-match ";" line))
+             (preview-cursor-scope (gethash :previewCursorScope result))
+             (cursor-x (gethash :cursorX result))
+             (cursor-line (gethash :cursorLine result)))
+        (puthash :trackingIndent tracking-indent result)
+        (puthash :indentAtCursor (and preview-cursor-scope
+                                      tracking-indent
+                                      (= cursor-line line-no)
+                                      (string-match parinferlib--STANDALONE_PAREN_TRAIL line)
+                                      (or (not semicolon-x)
+                                          (<= cursor-x semicolon-x))))))
+     ((equal mode :paren)
+      (puthash :trackingIndent (not in-str?) result)))))
 
 ;;------------------------------------------------------------------------------
 ;; High-level processing functions
@@ -583,10 +623,8 @@
     (when (equal :paren mode)
       (parinferlib--handle-cursor-delta result))
 
-    (when (and (gethash :trackingIndent result)
-               (not (string= ch parinferlib--BLANK_SPACE))
-               (not (string= ch parinferlib--TAB)))
-      (parinferlib--on-indent result))
+    (when (gethash :trackingIndent result)
+      (parinferlib--check-indent result))
 
     (if (gethash :skipChar result)
       (puthash :ch "" result)
@@ -607,7 +645,7 @@
         (puthash :trackingIndent tracking-indent? result)))
     (when (equal mode :paren)
       (puthash :trackingIndent (not (gethash :isInStr result)) result)))
-
+  (parinferlib--init-ind)
   (let* ((i 0)
          (chars (concat line parinferlib--NEWLINE))
          (chars-length (length chars)))
@@ -691,7 +729,7 @@
     (parinferlib--public-result result)))
 
 (defun parinferlib-version ()
-  "1/6/1+dev")
+  "1.6.1+dev")
 
 (provide 'parinferlib)
 
