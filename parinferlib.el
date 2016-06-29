@@ -36,6 +36,16 @@
 (defconst parinferlib--LINE_NO_IDX 2)
 (defconst parinferlib--X_IDX 3)
 
+;; A tab stop stack element is a Vector of 3 items
+;; idx : item
+;;   0 : ch
+;;   1 : x
+;;   2 : lineNo
+;; Elements are the same as those in paren stack
+(defconst parinferlib--TAB_CH_IDX 0)
+(defconst parinferlib--TAB_LINE_NO_IDX 1)
+(defconst parinferlib--TAB_X_IDX 2)
+
 (defconst parinferlib--SENTINEL_NULL -999)
 
 ;; determines if a line only contains a Paren Trail (possibly w/ a comment)
@@ -87,6 +97,7 @@
     (puthash :x 0 result)
 
     (puthash :parenStack '() result)
+    (puthash :tabStops '() result)
 
     (puthash :parenTrailLineNo parinferlib--SENTINEL_NULL result)
     (puthash :parenTrailStartX parinferlib--SENTINEL_NULL result)
@@ -625,6 +636,20 @@
       ((:paren)
        (puthash :trackingIndent (not in-str?) result)))))
 
+(defun parinferlib--set-tab-stops (result)
+  (let ((cursor-line (gethash :cursorLine result))
+        (line-no (gethash :lineNo result))
+        (mode (gethash :mode result)))
+    (unless (or (/= cursor-line line-no)
+                (not (equal mode :indent)))
+      (let ((new-stops nil))
+        (dolist (stackel (gethash :parenStack result))
+          (push (vector (aref stackel parinferlib--CH_IDX)
+                        (aref stackel parinferlib--X_IDX)
+                        (aref stackel parinferlib--LINE_NO_IDX))
+                new-stops))
+        (puthash :tabStops (nconc new-stops (gethash :tabStops result)) result)))))
+
 ;;------------------------------------------------------------------------------
 ;; High-level processing functions
 ;;------------------------------------------------------------------------------
@@ -651,6 +676,7 @@
 (defun parinferlib--process-line (result line)
   (parinferlib--init-line result line)
   (parinferlib--init-indent result)
+  (parinferlib--set-tab-stops result)
   (let* ((i 0)
          (chars (concat line parinferlib--NEWLINE))
          (chars-length (length chars)))
@@ -708,10 +734,12 @@
   (if (gethash :success result)
     (let* ((lines (gethash :lines result))
            (result-text (mapconcat 'identity lines parinferlib--NEWLINE))
-           (cursor-x (gethash :cursorX result)))
+           (cursor-x (gethash :cursorX result))
+           (tab-stops (gethash :tabStops result)))
       (list :success t
             :cursorX cursor-x
-            :text result-text))
+            :text result-text
+            :tabStops tab-stops))
     (let ((orig-text (gethash :origText result))
           (public-error (gethash :error result))
           (orig-cursor-x (gethash :origCursorX result)))
