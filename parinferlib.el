@@ -617,10 +617,14 @@
   (let ((mode (gethash :mode result))
         (in-str? (gethash :isInStr result)))
     (case mode
-     ((:indent)
-      (parinferlib--init-preview-cursor-scope result))
-     ((:paren)
-      (puthash :trackingIndent (not in-str?) result)))))
+      ((:indent)
+       ;; length of list > 0 means the same as the list not being null
+       (puthash :trackingIndent (and (gethash :parenStack result)
+                                     (not in-str?))
+                result)
+       (parinferlib--init-preview-cursor-scope result))
+      ((:paren)
+       (puthash :trackingIndent (not in-str?) result)))))
 
 ;;------------------------------------------------------------------------------
 ;; High-level processing functions
