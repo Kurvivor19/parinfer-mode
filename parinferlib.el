@@ -155,10 +155,11 @@
   (let* ((error-cache (gethash :errorPosCache result))
          (error-msg (gethash error-name parinferlib--ERR_MESSAGES))
          (error-pos (plist-get error-cache error-name)))
-    (when (/= line-no parinferlib--SENTINEL_NULL)
-      (setq line-no (aref error-pos 0)))
-    (when (/= x parinferlib--SENTINEL_NULL)
-      (setq x (aref error-pos 1)))
+    (when error-pos
+      (when (/= line-no parinferlib--SENTINEL_NULL)
+        (setq line-no (aref error-pos 0)))
+      (when (/= x parinferlib--SENTINEL_NULL)
+        (setq x (aref error-pos 1))))
     ;; return a plist of the error
     (list :name error-name
           :message error-msg
@@ -573,7 +574,7 @@
   (let ((mode (gethash :mode result))
         (x (gethash :x result)))
     (when (equal mode :indent)
-      (parinferlib--try-preview-cursor-scope result)
+      (parinferlib--try-preview-cursor-change result)
       (parinferlib--correct-paren-trail result x))
     (when (equal mode :paren)
       (parinferlib--correct-indent result))))
