@@ -1,4 +1,4 @@
-(load-file "./parinferlib.el")
+(require 'parinferlib)
 
 (defun parinfer-mode--insert-result (result)
   "Put results of running parinfer in current buffer
