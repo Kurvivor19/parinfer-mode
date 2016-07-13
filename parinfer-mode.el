@@ -4,15 +4,16 @@
   (let ((inhibit-modification-hooks t))
     (cl-macrolet ((-char-before (point) `(or (char-before ,point) -1))
                   (-char-after (point) `(or (char-after ,point) -1)))
-      (if (and (plist-get result :success)
-               (not (and (= (-char-before (point)) 10)
-                         (= (-char-after (point)) 41))))
-          (let ((old-buffer (current-buffer))
-                (old-point (point)))
-            (with-temp-buffer
-              (insert (plist-get result :text))
-              (copy-to-buffer old-buffer (point-min) (point-max)))
-            (goto-char old-point))))))
+      (if (plist-get result :success)
+          (if (not (and (= (-char-before (point)) 10)
+                        (= (-char-after (point)) 41)))
+              (let ((old-buffer (current-buffer))
+                    (old-point (point)))
+                (with-temp-buffer
+                  (insert (plist-get result :text))
+                  (copy-to-buffer old-buffer (point-min) (point-max)))
+                (goto-char old-point)))
+        (message "Parinfer did not succeed: %s" (plist-get result :error))))))
 
 (defun parinfer-mode-indent-mode ()
   (parinfer-mode--insert-result (parinferlib-indent-mode (buffer-string)
@@ -25,6 +26,12 @@
                                                        (current-column)
                                                        (- (line-number-at-pos) 1)
                                                        nil)))
+
+(defvar parinfer-mode--last-changes
+  nil
+  "Holds data on last changes made in buffer
+If nil, there are no changes
+Otherwise, it is a list whose car holds the cursor-dx value to pass to parinferlib")
 
 (defvar parinfer-mode--current-mode
   :indent
@@ -62,19 +69,32 @@
                                          nil)))
 
 (defun parinfer-mode--process-changes (BEG END OLD)
-  (let ((cursor-dx
-         (if (= (line-number-at-pos BEG)
-                (line-number-at-pos END))
-             (or (and (>= (point) BEG)
-                      (> (- END BEG) OLD)
-                      (- END OLD BEG))
-                 (and (<= (point) END)
-                      (> OLD (- END BEG))
-                      (- END OLD BEG))))))
+  "Store cursor changes for later use"
+  (unless undo-in-progress
+    (let ((cursor-dx
+           (if (= (line-number-at-pos BEG)
+                  (line-number-at-pos END))
+               (or (and (>= (point) BEG)
+                        (> (- END BEG) OLD)
+                        (- END OLD BEG))
+                   (and (<= (point) END)
+                        (> OLD (- END BEG))
+                        (- END OLD BEG)))))
+          (prev-dx (car parinfer-mode--last-changes)))
+      (if parinfer-mode--last-changes
+          (setcar parinfer-mode--last-changes (and cursor-dx
+                                                   prev-dx
+                                                   (+ cursor-dx prev-dx)))
+        (setq parinfer-mode--last-changes (list cursor-dx))))))
+
+(defun parinfer-mode--postprocess-changes ()
+  "After command finishes executing, process all changes made there"
+  (when parinfer-mode--last-changes
     (parinfer-mode--insert-result (funcall parinfer-mode--processor (buffer-string)
                                            (current-column)
                                            (1- (line-number-at-pos))
-                                           cursor-dx))))
+                                           (car parinfer-mode--last-changes)))
+    (setq parinfer-mode--last-changes nil)))
 
 (define-minor-mode parinfer-mode
   "Uses Parinfer to Format lispy code"
@@ -87,9 +107,11 @@
    ;; when mode is being turned on
    (parinfer-mode
     (parinfer-mode--refresh)
-    (add-hook 'after-change-functions 'parinfer-mode--process-changes nil t))
+    (add-hook 'after-change-functions 'parinfer-mode--process-changes nil t)
+    (add-hook 'post-command-hook 'parinfer-mode--postprocess-changes nil t))
    ;; when mode is being turned off
    (t
-    (remove-hook 'after-change-functions 'parinfer-mode--process-changes t))))
+    (remove-hook 'after-change-functions 'parinfer-mode--process-changes t)
+    (remove-hook 'post-command-hook 'parinfer-mode--postprocess-changes t))))
 
 (provide 'parinfer-mode)
