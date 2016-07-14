@@ -1,48 +1,5 @@
 (require 'parinferlib)
 
-(defun parinfer-mode--insert-result (result)
-  "Put results of running parinfer in current buffer
-If cursor is right after a newline and next character is a closing curly brace, result is ignored
-All lines that were changed are replaced, then cursor is set toa new position"
-  (let ((inhibit-modification-hooks t))
-    (cl-macrolet ((-char-before (point) `(or (char-before ,point) -1))
-                  (-char-after (point) `(or (char-after ,point) -1))
-                  (sv (arg) `(symbol-value ,arg)))
-      (cl-labels ((replace-line (index new-line posvar)
-                                (forward-line (- index (sv posvar)))
-                                (let ((beg (point))
-                                      (end (progn (move-end-of-line 1) (point))))
-                                  (insert new-line)
-                                  (delete-region beg end))
-                                (set posvar index)))
-        (if (plist-get result :success)
-            (if (not (and (= (-char-before (point)) 10)
-                          (= (-char-after (point)) 41)))
-                (let* ((old-line (line-number-at-pos))
-                       (new-lines (plist-get result :changedLines))
-                       (new-line-point (plist-get result :cursorX))
-                       (cur-line old-line))
-                  (mapc (lambda (elem)
-                          (replace-line (1+ (aref elem 0))
-                                        (aref elem 1)
-                                        'cur-line))
-                        new-lines)
-                  (forward-line (- old-line cur-line))
-                  (forward-char new-line-point)))
-        (message "Parinfer did not succeed: %s" (plist-get result :error)))))))
-
-(defun parinfer-mode-indent-mode ()
-  (parinfer-mode--insert-result (parinferlib-indent-mode (buffer-string)
-                                                        (current-column)
-                                                        (- (line-number-at-pos) 1)
-                                                        nil)))
-
-(defun parinfer-mode-paren-mode ()
-  (parinfer-mode--insert-result (parinferlib-paren-mode (buffer-string)
-                                                       (current-column)
-                                                       (- (line-number-at-pos) 1)
-                                                       nil)))
-
 (defvar parinfer-mode--last-changes
   nil
   "Holds data on last changes made in buffer
@@ -54,8 +11,44 @@ Otherwise, it is a list whose car holds the cursor-dx value to pass to parinferl
   "Submode of parinfer; it is either :indent or :paren")
 
 (defvar parinfer-mode--processor
-  'parinferlib--indent-mode
+  'parinferlib-indent-mode
   "Parinfer function to process current buffer")
+
+(defun parinfer-mode--replace-line (index newline old-index)
+  "Helper function
+Replace line at index with newline, presuming currently we are on oldline"
+  (forward-line (- index (symbol-value old-index))
+  (let ((beg (point))
+        (end (progn (move-end-of-line 1) (point))))
+    (insert newline)
+    (delete-region beg end))
+  (set old-index index)))
+
+(defun parinfer-mode--result-guard ()
+  "Helper function
+Returns t if cursor position allows to insert result"
+  (not (and (= (or (char-before (point)) -1) 10)
+            (= (or (char-after (point)) -1) 41))))
+
+(defun parinfer-mode--insert-result (result)
+  "Put results of running parinfer in current buffer
+If cursor is right after a newline and next character is a closing curly brace, result is ignored
+All lines that were changed are replaced, then cursor is set toa new position"
+  (let ((inhibit-modification-hooks t))
+    (if (plist-get result :success)
+        (if (parinfer-mode--result-guard)
+            (let* ((old-line (line-number-at-pos))
+                   (new-lines (plist-get result :changedLines))
+                   (new-line-point (plist-get result :cursorX))
+                   (cur-line old-line))
+              (mapc (lambda (elem)
+                      (parinfer-mode--replace-line (1+ (aref elem 0))
+                                                   (aref elem 1)
+                                                   'cur-line))
+                    new-lines)
+              (forward-line (- old-line cur-line))
+              (forward-char new-line-point)))
+      (message "Parinfer did not succeed: %s" (plist-get result :error)))))
 
 (defun parinfer-mode--compose-mode-line ()
   "Compose mode line for the current work mode"
@@ -67,13 +60,12 @@ Otherwise, it is a list whose car holds the cursor-dx value to pass to parinferl
 (defun parinfer-mode--toggle ()
   "Switch between parinfer submodes"
   (interactive)
-  (case parinfer-mode--current-mode
-    (:indent
-     (setq parinfer-mode--current-mode :paren)
-     (setq parinfer-mode--processor 'parinferlib-paren-mode))
-    (t
+  (if (eql parinfer-mode--current-mode :indent)
+      (progn
+        (setq parinfer-mode--current-mode :paren)
+        (setq parinfer-mode--processor 'parinferlib-paren-mode))
      (setq parinfer-mode--current-mode :indent)
-     (setq parinfer-mode--processor 'parinferlib-indent-mode)))
+     (setq parinfer-mode--processor 'parinferlib-indent-mode))
   (force-mode-line-update))
 
 (defun parinfer-mode--refresh ()
@@ -84,18 +76,18 @@ Otherwise, it is a list whose car holds the cursor-dx value to pass to parinferl
                                          (1- (line-number-at-pos))
                                          nil)))
 
-(defun parinfer-mode--process-changes (BEG END OLD)
+(defun parinfer-mode--process-changes (beg end old)
   "Store cursor changes for later use"
   (unless undo-in-progress
     (let ((cursor-dx
-           (if (= (line-number-at-pos BEG)
-                  (line-number-at-pos END))
-               (or (and (>= (point) BEG)
-                        (> (- END BEG) OLD)
-                        (- END OLD BEG))
-                   (and (<= (point) END)
-                        (> OLD (- END BEG))
-                        (- END OLD BEG)))))
+           (if (= (line-number-at-pos beg)
+                  (line-number-at-pos end))
+               (or (and (>= (point) beg)
+                        (> (- end beg) old)
+                        (- end old beg))
+                   (and (<= (point) end)
+                        (> old (- end beg))
+                        (- end old beg)))))
           (prev-dx (car parinfer-mode--last-changes)))
       (if parinfer-mode--last-changes
           (setcar parinfer-mode--last-changes (and cursor-dx
@@ -119,15 +111,14 @@ Otherwise, it is a list whose car holds the cursor-dx value to pass to parinferl
              (define-key map (kbd "C-c t") 'parinfer-mode--toggle)
              (define-key map (kbd "C-c r") 'parinfer-mode--refresh)
              map)
-  (cond
-   ;; when mode is being turned on
-   (parinfer-mode
-    (parinfer-mode--refresh)
-    (add-hook 'after-change-functions 'parinfer-mode--process-changes nil t)
-    (add-hook 'post-command-hook 'parinfer-mode--postprocess-changes nil t))
+  (if parinfer-mode
+      ;; when bode is turned on
+      (progn
+        (parinfer-mode--refresh)
+        (add-hook 'after-change-functions 'parinfer-mode--process-changes nil t)
+        (add-hook 'post-command-hook 'parinfer-mode--postprocess-changes nil t))
    ;; when mode is being turned off
-   (t
     (remove-hook 'after-change-functions 'parinfer-mode--process-changes t)
-    (remove-hook 'post-command-hook 'parinfer-mode--postprocess-changes t))))
+    (remove-hook 'post-command-hook 'parinfer-mode--postprocess-changes t)))
 
 (provide 'parinfer-mode)
