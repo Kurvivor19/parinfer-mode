@@ -14,6 +14,10 @@ Otherwise, it is a list whose car holds the cursor-dx value to pass to parinferl
   'parinferlib-indent-mode
   "Parinfer function to process current buffer")
 
+(defvar parinfer-mode--tab-stops
+  nil
+  "Holds data on the tab stops on current line")
+
 (defun parinfer-mode--replace-line (index newline old-index)
   "Helper function
 Replace line at index with newline, presuming currently we are on oldline"
@@ -34,13 +38,17 @@ Returns t if cursor position allows to insert result"
   "Put results of running parinfer in current buffer
 If cursor is right after a newline and next character is a closing curly brace, result is ignored
 All lines that were changed are replaced, then cursor is set toa new position"
-  (let ((inhibit-modification-hooks t))
+  (let ((inhibit-modification-hooks t)
+        (tab-stops (plist-get result :tab-stops)))
+    ;; first, old tab-stops are discarded
+    (setq parinfer-mode--tab-stops nil)
     (if (plist-get result :success)
         (if (parinfer-mode--result-guard)
             (let* ((old-line (line-number-at-pos))
                    (new-lines (plist-get result :changed-lines))
                    (new-line-point (plist-get result :cursor-x))
                    (cur-line old-line))
+              (setq parinfer-mode--tab-stops tab-stops)
               (mapc (lambda (elem)
                       (parinfer-mode--replace-line (1+ (plist-get elem :line-no))
                                                    (plist-get elem :line)
@@ -123,5 +131,15 @@ All lines that were changed are replaced, then cursor is set toa new position"
    ;; when mode is being turned off
     (remove-hook 'after-change-functions 'parinfer-mode--process-changes t)
     (remove-hook 'post-command-hook 'parinfer-mode--postprocess-changes t)))
+
+(defun parinfer-mode--debug-show-tabs ()
+  (save-excursion
+    (let* ((beg (progn (move-beginning-of-line 1)(point)))
+           (end (progn (move-end-of-line 1) (point)))
+           (line-length (- end beg)))
+     (dolist (tab-el parinfer-mode--tab-stops)
+       (put-text-property (+ beg (plist-get tab-el :x))
+                          (+ beg (plist-get tab-el :x) 1)
+                          'face '(:background "green"))))))
 
 (provide 'parinfer-mode)
