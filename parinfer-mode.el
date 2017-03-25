@@ -1,11 +1,18 @@
 (require 'parinferlib)
 
-(defvar parinfer-mode--last-changes
+(defvar-local parinfer-mode--last-changes
   nil
   "Holds data on last changes made in buffer
 If nil, there are no changes
 Otherwise, it is a list whose car holds the cursor-dx value to pass to parinferlib")
 
+(defvar-local parinfer-mode--tab-stops
+  nil
+  "Holds data on the tab stops on current line")
+
+;; following variables are defined global for user experience. User
+;; should not have to look up which mode of parinfer he is in when
+;; switching buffers
 (defvar parinfer-mode--current-mode
   :indent
   "Submode of parinfer; it is either :indent or :paren")
@@ -14,9 +21,9 @@ Otherwise, it is a list whose car holds the cursor-dx value to pass to parinferl
   'parinferlib-indent-mode
   "Parinfer function to process current buffer")
 
-(defvar parinfer-mode--tab-stops
-  nil
-  "Holds data on the tab stops on current line")
+(defconst parinfer-mode--col-interval
+  2
+  "Indent between levels of parenthesis")
 
 (defun parinfer-mode--replace-line (index newline old-index)
   "Helper function
@@ -115,12 +122,33 @@ All lines that were changed are replaced, then cursor is set toa new position"
                                              options)))
     (setq parinfer-mode--last-changes nil)))
 
+(defun parinfer-mode--cycle-indent ()
+  "Indent the line if in indent mode"
+  (interactive)
+  (when (and parinfer-mode--tab-stops
+             (eql parinfer-mode--current-mode :indent))
+    (let* ((old-point (current-column))
+           (old-indent (current-indentation))
+           (stops parinfer-mode--tab-stops)
+           (cur-stop (car stops))
+           (target-indent
+             (if (>= (plist-get cur-stop :x) old-indent)
+                 (plist-get (car (last stops)) :x)
+               (cl-dolist (next-stop stops (plist-get cur-stop :x))
+                 (if (< (plist-get next-stop :x) old-indent)
+                     (setq cur-stop next-stop)
+                   (return (plist-get cur-stop :x)))))))
+      (indent-line-to target-indent)
+      (if (> old-point old-indent)
+          (forward-char (- old-point old-indent))))))
+
 (define-minor-mode parinfer-mode
   "Uses Parinfer to Format lispy code"
   :lighter (:eval (parinfer-mode--compose-mode-line))
   :keymap (let ((map (make-sparse-keymap)))
              (define-key map (kbd "C-c t") 'parinfer-mode--toggle)
              (define-key map (kbd "C-c r") 'parinfer-mode--refresh)
+             (define-key map (kbd "<backtab>") 'parinfer-mode--cycle-indent)
              map)
   (if parinfer-mode
       ;; when bode is turned on
